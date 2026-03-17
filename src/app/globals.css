@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  --radius-3xl: 24px;
+  --radius-4xl: 32px;
+}
+
+:root {
+  --background: #f8fafc;
+  /* Slighter gray to avoid eye strain */
+  --foreground: #0f172a;
+
+  --primary: #2563eb;
+  /* Strong Blue like reference */
+  --primary-hover: #1d4ed8;
+  --primary-glow: rgba(37, 99, 235, 0.15);
+
+  --sidebar-bg: #1e40af;
+  /* Solid Indigo/Blue from reference */
+  --sidebar-text: #ffffff;
+
+  --card: #ffffff;
+  --card-border: #e2e8f0;
+
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #3b82f6;
+
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.5);
+}
+
+.dark {
+  --background: #020617;
+  --foreground: #f8fafc;
+
+  --card: #0f172a;
+  --card-border: #1e293b;
+
+  --sidebar-bg: #0f172a;
+  --sidebar-text: #f8fafc;
+
+  --glass-bg: rgba(15, 23, 42, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.05);
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--background)] text-[var(--foreground)] font-sans antialiased transition-colors duration-300;
+  }
+}
+
+@layer components {
+  .premium-card {
+    @apply bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-6 transition-all duration-300 shadow-sm relative overflow-hidden;
+  }
+
+  .premium-card:hover {
+    @apply shadow-md border-indigo-200;
+  }
+
+  /* Status Bars inspired by user image */
+  .status-bar {
+    @apply absolute top-0 left-0 right-0 h-1.5;
+  }
+
+  .status-bar-blue {
+    @apply bg-blue-500;
+  }
+
+  .status-bar-green {
+    @apply bg-emerald-500;
+  }
+
+  .status-bar-red {
+    @apply bg-rose-500;
+  }
+
+  .status-bar-yellow {
+    @apply bg-amber-500;
+  }
+
+  .glass-effect {
+    @apply backdrop-blur-xl border border-[var(--glass-border)] bg-[var(--glass-bg)];
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-semibold;
+  }
+
+  .nav-item-active {
+    @apply bg-white/10 text-white border border-white/20;
+  }
+
+  .nav-item-inactive {
+    @apply text-blue-100/70 hover:text-white hover:bg-white/5;
+  }
+
+  .btn-premium {
+    @apply inline-flex items-center gap-2 bg-[var(--primary)] text-white px-5 py-2.5 rounded-xl font-bold transition-all duration-200 shadow-sm;
+  }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-slate-200 rounded-full;
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-slate-800;
+}

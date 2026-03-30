@@ -118,3 +118,22 @@
 .dark .custom-scrollbar::-webkit-scrollbar-thumb {
   @apply bg-slate-800;
 }
+
+/* Fix: ensure native select and input elements have correct text color in both themes */
+input, select, textarea {
+  color: #0f172a;
+}
+
+.dark input, .dark select, .dark textarea {
+  color: #f1f5f9;
+}
+
+.dark option {
+  background-color: #1e293b;
+  color: #f1f5f9;
+}
+
+option {
+  background-color: #ffffff;
+  color: #0f172a;
+}

@@ -61,6 +61,25 @@ interface MaintenanceRecord {
   month: string;
 }
 
+interface HistoryRecord {
+  otm: string;
+  serie: string;
+  denominacion: string;
+  marca: string;
+  modelo: string;
+  repuestos: string;
+  responsable: string;
+  tipoMantenimiento: string;
+  servicio: string;
+  prioridad: string;
+  horasHombre: number;
+  mes: string;
+  anio: string;
+  dia: string;
+  fecha: string;
+  searchString: string;
+}
+
 interface Equipment {
   serialNumber: string;
   assetTag: string;
@@ -78,8 +97,18 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'historial' | 'kpis'>('dashboard');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  const [historialData, setHistorialData] = useState<HistoryRecord[]>([]);
+  const [historialLoading, setHistorialLoading] = useState(false);
+  const [historialSearchTerm, setHistorialSearchTerm] = useState('');
+  const [repuestoSearchTerm, setRepuestoSearchTerm] = useState('');
+
+  // Filtros interactivos para KPIs
+  const [kpiServicioFilter, setKpiServicioFilter] = useState('TODOS');
+  const [kpiAnioFilter, setKpiAnioFilter] = useState('TODOS');
+  const [kpiMesFilter, setKpiMesFilter] = useState('TODOS');
 
   // Filtros adicionales
   const [globalServiceFilter, setGlobalServiceFilter] = useState<string[]>([]);
@@ -139,6 +168,35 @@ export default function Home() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'historial' && historialData.length === 0 && !historialLoading) {
+      setHistorialLoading(true);
+      fetch('/api/historial')
+        .then(res => res.json())
+        .then(d => {
+          if (Array.isArray(d)) setHistorialData(d);
+          setHistorialLoading(false);
+        })
+        .catch(err => {
+          console.error(err);
+          setHistorialLoading(false);
+        });
+    }
+  }, [activeTab, historialData.length, historialLoading]);
+
+  const filteredHistorial = useMemo(() => {
+    let result = historialData;
+    if (historialSearchTerm) {
+      const term = historialSearchTerm.toLowerCase();
+      result = result.filter(h => h.searchString.includes(term));
+    }
+    if (repuestoSearchTerm) {
+      const term = repuestoSearchTerm.toLowerCase();
+      result = result.filter(h => h.repuestos && h.repuestos.toLowerCase().includes(term));
+    }
+    return result;
+  }, [historialData, historialSearchTerm, repuestoSearchTerm]);
 
   // Lógica de filtrado mejorada
   const baseFilteredData = useMemo(() => {
@@ -231,6 +289,135 @@ export default function Home() {
       .slice(0, 10);
   }, [activeEquipments]);
 
+  // Listas desplegables para KPIs
+  const uniqueKpiServicios = useMemo(() => Array.from(new Set(historialData.map(h => (h.servicio && h.servicio !== '---' && h.servicio !== '-' ? h.servicio.trim().toUpperCase() : 'SIN ESPECIFICAR')))).filter(Boolean).sort(), [historialData]);
+  const uniqueKpiAnios = useMemo(() => Array.from(new Set(historialData.map(h => (h.anio && h.anio !== '---' && h.anio !== '-' ? h.anio.trim() : 'NO DEFINIDO')))).filter(Boolean).sort().reverse(), [historialData]);
+  const uniqueKpiMeses = useMemo(() => {
+    const meses = Array.from(new Set(historialData.map(h => (h.mes && h.mes !== '---' && h.mes !== '-' ? h.mes.trim().toUpperCase() : 'SIN FECHA')))).filter(m => m !== 'SIN FECHA');
+    const MESES_ORDER = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+    return meses.sort((a, b) => {
+      const idxA = MESES_ORDER.indexOf(a);
+      const idxB = MESES_ORDER.indexOf(b);
+      return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
+    });
+  }, [historialData]);
+
+  // Datos filtrados interactivos para el Dashboard Analítico
+  const filteredHistorialForKpi = useMemo(() => {
+    return historialData.filter(h => {
+       const svc = h.servicio && h.servicio !== '---' && h.servicio !== '-' ? h.servicio.trim().toUpperCase() : 'SIN ESPECIFICAR';
+       const yr = h.anio && h.anio !== '---' && h.anio !== '-' ? h.anio.trim() : 'NO DEFINIDO';
+       const mo = h.mes && h.mes !== '---' && h.mes !== '-' ? h.mes.trim().toUpperCase() : 'SIN FECHA';
+       
+       const matchSvc = kpiServicioFilter === 'TODOS' || svc === kpiServicioFilter;
+       const matchYr = kpiAnioFilter === 'TODOS' || yr === kpiAnioFilter;
+       const matchMo = kpiMesFilter === 'TODOS' || mo === kpiMesFilter;
+       return matchSvc && matchYr && matchMo;
+    });
+  }, [historialData, kpiServicioFilter, kpiAnioFilter, kpiMesFilter]);
+
+  // Analytics Historial extraídos dinámicamente
+  const kpiStats = useMemo(() => {
+    let preventivos = 0;
+    let correctivos = 0;
+    let complementarios = 0;
+    let horasTotales = 0;
+    let finesDeSemana = 0;
+    const respCount: Record<string, number> = {};
+    const marcaCount: Record<string, number> = {};
+    const prioridadCount: Record<string, number> = {};
+    const mesCount: Record<string, number> = {};
+    const individualRepuestos: Record<string, number> = {};
+    const equiposCorrectivos: Record<string, number> = {};
+
+    filteredHistorialForKpi.forEach(h => {
+      // Tipos
+      const tipo = (h.tipoMantenimiento || '').toLowerCase();
+      if (tipo.includes('preventivo')) preventivos++;
+      else if (tipo.includes('correctivo')) correctivos++;
+      else if (tipo.includes('complementario')) complementarios++;
+
+      // Fin de Semana
+      const dia = (h.dia || '').toLowerCase();
+      if (dia.includes('sab') || dia.includes('sáb') || dia.includes('dom')) {
+        finesDeSemana++;
+      }
+
+      // Horas Hombre
+      horasTotales += Number(h.horasHombre) || 0;
+
+      // Responsables top 5
+      const rawResp = h.responsable && h.responsable !== '-' ? h.responsable : 'Sin Asignar';
+      const resp = rawResp.trim().toUpperCase();
+      respCount[resp] = (respCount[resp] || 0) + 1;
+
+      // Marcas top 5
+      const rawMar = h.marca && h.marca !== '-' ? h.marca : 'Sin Marca';
+      const mar = rawMar.trim().toUpperCase();
+      marcaCount[mar] = (marcaCount[mar] || 0) + 1;
+
+      // Top Equipos Correctivos
+      if (tipo.includes('correctivo')) {
+        const equipoRaw = h.denominacion && h.denominacion !== '-' ? h.denominacion : (h.marca + ' ' + h.modelo);
+        const equipo = equipoRaw.trim().toUpperCase();
+        equiposCorrectivos[equipo] = (equiposCorrectivos[equipo] || 0) + 1;
+      }
+
+      // Top Repuestos Individuales
+      if (h.repuestos && h.repuestos !== 'Ninguno') {
+        const parts = h.repuestos.split(',').map(r => r.trim().toUpperCase()).filter(r => r.length > 2 && r !== '---' && r !== '-');
+        parts.forEach(p => {
+            individualRepuestos[p] = (individualRepuestos[p] || 0) + 1;
+        });
+      }
+
+      // Prioridad
+      const prio = h.prioridad && h.prioridad !== '---' && h.prioridad !== '-' ? h.prioridad.trim().toUpperCase() : 'NO ESPECIFICADA';
+      prioridadCount[prio] = (prioridadCount[prio] || 0) + 1;
+
+      // Mes para tendencia
+      const mesVal = h.mes && h.mes !== '---' && h.mes !== '-' ? h.mes.trim().toUpperCase() : 'SIN FECHA';
+      mesCount[mesVal] = (mesCount[mesVal] || 0) + 1;
+    });
+
+    const topResp = Object.entries(respCount).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
+    const topMarcas = Object.entries(marcaCount).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
+    
+    const topRepuestos = Object.entries(individualRepuestos).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+    const topEqCorrectivos = Object.entries(equiposCorrectivos).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 5);
+
+    const MESES_ORDER = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+    const tendenciaMensual = Object.entries(mesCount)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => {
+        const indexA = MESES_ORDER.indexOf(a.name);
+        const indexB = MESES_ORDER.indexOf(b.name);
+        return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB);
+      })
+      .filter(item => item.name !== 'SIN FECHA');
+
+    const prioridades = Object.entries(prioridadCount).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+
+    const prevVsCorr = [
+      { name: 'Preventivo', value: preventivos },
+      { name: 'Correctivo', value: correctivos }
+    ];
+    if (complementarios > 0) prevVsCorr.push({ name: 'Complementario', value: complementarios });
+
+    return { 
+      total: filteredHistorialForKpi.length, 
+      prevVsCorr, 
+      topResp, 
+      topMarcas, 
+      topRepuestos,
+      topEqCorrectivos,
+      horasTotales: Math.round(horasTotales), 
+      finesDeSemana,
+      tendenciaMensual, 
+      prioridades 
+    };
+  }, [filteredHistorialForKpi]);
+
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6366f1'];
 
   const containerVariants = {
@@ -291,6 +478,20 @@ export default function Home() {
             >
               <Box size={18} />
               <span className="text-sm">Inventario</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('historial')}
+              className={`nav-item w-full ${activeTab === 'historial' ? 'nav-item-active' : 'nav-item-inactive'}`}
+            >
+              <History size={18} />
+              <span className="text-sm">Buscador Historial</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('kpis')}
+              className={`nav-item w-full ${activeTab === 'kpis' ? 'nav-item-active' : 'nav-item-inactive'}`}
+            >
+              <BarChart3 size={18} />
+              <span className="text-sm">Analytics Historial</span>
             </button>
           </nav>
         </div>
@@ -367,7 +568,7 @@ export default function Home() {
         <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40 px-8 flex items-center justify-between transition-colors duration-300">
           <div className="flex items-center gap-4">
             <h2 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-              {activeTab === 'dashboard' ? 'Panel de Gestión' : 'Control de Activos'}
+              {activeTab === 'dashboard' ? 'Panel de Gestión' : activeTab === 'inventory' ? 'Control de Activos' : activeTab === 'historial' ? 'Buscador de Historial' : 'Analytics Historial'}
               <ChevronRight size={14} className="text-slate-400" />
               <span className="text-slate-400 dark:text-slate-500 font-medium text-xs">Principal</span>
             </h2>
@@ -671,7 +872,7 @@ export default function Home() {
                   </div>
                 </motion.div>
               </motion.div>
-            ) : (
+            ) : activeTab === 'inventory' ? (
               <motion.div
                 key="inventory"
                 initial={{ opacity: 0, y: 10 }}
@@ -944,6 +1145,340 @@ export default function Home() {
                     </motion.div>
                   )}
                 </AnimatePresence>
+              </motion.div>
+            ) : activeTab === 'historial' ? (
+              <motion.div
+                key="historial"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-8"
+              >
+                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
+                  <div>
+                    <h3 className="text-2xl font-bold text-slate-800 dark:text-white">Buscador Avanzado de Historial</h3>
+                    <p className="text-slate-500 dark:text-slate-400 font-medium text-sm mt-0.5">Consulta de intervenciones registradas en el excel ({filteredHistorial.length} resultados)</p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
+                    <div className="relative group w-full sm:w-[350px]">
+                      <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                      <input
+                        type="text"
+                        placeholder="BÚSQUEDA GENERAL..."
+                        value={historialSearchTerm}
+                        onChange={(e) => setHistorialSearchTerm(e.target.value)}
+                        className="w-full h-12 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl pl-12 pr-4 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all uppercase"
+                      />
+                    </div>
+                    <div className="relative group w-full sm:w-[250px]">
+                      <Settings size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-amber-500 transition-colors" />
+                      <input
+                        type="text"
+                        placeholder="FILTRAR SOLO REPUESTOS..."
+                        value={repuestoSearchTerm}
+                        onChange={(e) => setRepuestoSearchTerm(e.target.value)}
+                        className="w-full h-12 bg-white dark:bg-slate-800 border-l-4 border-l-amber-500 border border-slate-200 dark:border-slate-800 rounded-xl pl-12 pr-4 text-[10px] font-bold outline-none focus:ring-2 focus:ring-amber-500/20 transition-all uppercase"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="premium-card overflow-hidden p-0">
+                  <div className="overflow-x-auto custom-scrollbar">
+                    {historialLoading ? (
+                      <div className="py-20 flex justify-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>
+                    ) : (
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
+                            {['OTM', 'Fechas', 'Equipo', 'Marca / Modelo', 'Repuestos Usados', 'Responsable'].map(h => (
+                              <th key={h} className="py-3 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredHistorial.slice(0, 100).map((h, i) => (
+                            <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition-colors group">
+                              <td className="py-2 px-4"><span className="text-[11px] font-black text-blue-600 dark:text-blue-400">{h.otm || '-'}</span></td>
+                              <td className="py-2 px-4"><span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{h.fecha || '-'}</span></td>
+                              <td className="py-2 px-4 min-w-[200px]">
+                                <p className="text-xs font-bold text-slate-800 dark:text-slate-200 line-clamp-1">{h.denominacion || '-'}</p>
+                                <p className="text-[10px] font-mono text-slate-400 dark:text-slate-500">S/N: {h.serie || '-'}</p>
+                              </td>
+                              <td className="py-2 px-4 min-w-[150px]">
+                                <span className="text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-200 px-2 py-0.5 rounded font-bold uppercase block w-max">{h.marca || '-'}</span>
+                                <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 block max-w-[150px] truncate">{h.modelo || '-'}</span>
+                              </td>
+                              <td className="py-2 px-4 min-w-[250px] max-w-[350px]">
+                                <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white transition-colors line-clamp-2" title={h.repuestos}>{h.repuestos || '-'}</p>
+                              </td>
+                              <td className="py-2 px-4"><span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">{h.responsable || '-'}</span></td>
+                            </tr>
+                          ))}
+                          {filteredHistorial.length === 0 && (
+                            <tr><td colSpan={6} className="py-16 text-center text-slate-400 font-medium text-sm">No se encontraron resultados para la búsqueda actual.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                  {!historialLoading && filteredHistorial.length > 100 && (
+                     <div className="p-4 text-center border-t border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/30">
+                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mostrando {Math.min(filteredHistorial.length, 100)} de {filteredHistorial.length} intervenciones</span>
+                     </div>
+                  )}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="kpis"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="space-y-8"
+              >
+                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
+                  <div>
+                    <h3 className="text-2xl font-bold text-slate-800 dark:text-white">Estadísticas e Indicadores Dinámicos</h3>
+                    <p className="text-slate-500 dark:text-slate-400 font-medium text-sm mt-0.5">Análisis generado a partir de las {kpiStats.total} intervenciones filtradas</p>
+                  </div>
+                  {/* Filtros Interactivos */}
+                  <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
+                    <div className="relative group w-full sm:w-[250px]">
+                      <select
+                        value={kpiServicioFilter}
+                        onChange={(e) => setKpiServicioFilter(e.target.value)}
+                        className="w-full h-12 bg-white dark:bg-slate-800 border-l-4 border-l-blue-500 border-y border-r border-slate-200 dark:border-slate-800 rounded-xl px-4 text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all uppercase appearance-none cursor-pointer"
+                      >
+                         <option value="TODOS">TODOS LOS SERVICIOS</option>
+                         {uniqueKpiServicios.map((s, i) => <option key={i} value={s}>{s}</option>)}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    </div>
+                    <div className="relative group w-full sm:w-[150px]">
+                      <select
+                        value={kpiAnioFilter}
+                        onChange={(e) => setKpiAnioFilter(e.target.value)}
+                        className="w-full h-12 bg-white dark:bg-slate-800 border-l-4 border-l-amber-500 border-y border-r border-slate-200 dark:border-slate-800 rounded-xl px-4 text-[10px] font-bold outline-none focus:ring-2 focus:ring-amber-500/20 transition-all uppercase appearance-none cursor-pointer"
+                      >
+                         <option value="TODOS">TODOS LOS AÑOS</option>
+                         {uniqueKpiAnios.map((a, i) => <option key={i} value={a}>{a}</option>)}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    </div>
+                    <div className="relative group w-full sm:w-[150px]">
+                      <select
+                        value={kpiMesFilter}
+                        onChange={(e) => setKpiMesFilter(e.target.value)}
+                        className="w-full h-12 bg-white dark:bg-slate-800 border-l-4 border-l-emerald-500 border-y border-r border-slate-200 dark:border-slate-800 rounded-xl px-4 text-[10px] font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all uppercase appearance-none cursor-pointer"
+                      >
+                         <option value="TODOS">TODOS LOS MESES</option>
+                         {uniqueKpiMeses.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+                
+                {historialData.length === 0 ? (
+                  <div className="text-center py-20 bg-slate-50 dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
+                    {historialLoading ? (
+                      <div className="flex justify-center flex-col items-center gap-4">
+                         <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                         <p className="text-slate-500 font-medium">Cargando base de datos histórica...</p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-4 cursor-pointer hover:scale-105 transition-transform" onClick={() => setActiveTab('historial')}>
+                        <History size={48} className="text-slate-300 dark:text-slate-700 mx-auto" />
+                        <p className="text-slate-400 dark:text-slate-500 font-bold">Haz clic para cargar el Historial primero</p>
+                      </div>
+                    )}
+                  </div>
+                ) : filteredHistorialForKpi.length === 0 ? (
+                  <div className="text-center py-20 bg-slate-50 dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
+                    <p className="text-slate-400 dark:text-slate-600 font-bold italic">No hay registros para los filtros seleccionados.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* General Workload KPI */}
+                    <div className="premium-card flex flex-col items-center justify-center py-6 h-full">
+                      <div className="flex gap-4 w-full h-full mb-4">
+                         <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800/30 p-4 rounded-2xl">
+                           <Activity size={24} className="text-blue-500 mb-2" />
+                           <h4 className="text-4xl font-black text-slate-900 dark:text-white mb-1">{kpiStats.total}</h4>
+                           <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest text-center leading-tight">Intervenciones<br/>Registradas</p>
+                         </div>
+                         <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800/30 p-4 rounded-2xl">
+                           <Clock size={24} className="text-emerald-500 mb-2" />
+                           <h4 className="text-4xl font-black text-slate-900 dark:text-white mb-1">{kpiStats.horasTotales}</h4>
+                           <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest text-center leading-tight">Horas Hombre<br/>Totales</p>
+                         </div>
+                      </div>
+                      <div className="w-full flex flex-col items-center justify-center bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-100 dark:border-indigo-800/50">
+                           <History size={20} className="text-indigo-500 mb-2" />
+                           <h4 className="text-3xl font-black text-indigo-900 dark:text-indigo-300 mb-1">{kpiStats.finesDeSemana}</h4>
+                           <p className="text-[9px] font-bold text-indigo-400 dark:text-indigo-400 uppercase tracking-widest text-center leading-tight">Trabajos en Fines de Semana / Feriados</p>
+                      </div>
+                    </div>
+
+                    {/* Preventivo vs Correctivo Pie Chart */}
+                    <div className="premium-card lg:col-span-2">
+                       <h4 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-6 border-b border-slate-50 dark:border-slate-800/50 pb-4">
+                        <PieChartIcon size={18} className="text-emerald-500" />
+                        Tipos de Mantenimiento
+                      </h4>
+                      <div className="h-[200px] flex items-center">
+                        <div className="w-1/2 h-full relative">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={kpiStats.prevVsCorr}
+                                innerRadius={60}
+                                outerRadius={85}
+                                paddingAngle={5}
+                                dataKey="value"
+                                stroke="none"
+                              >
+                                {kpiStats.prevVsCorr.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={entry.name === 'Preventivo' ? '#10b981' : entry.name === 'Correctivo' ? '#ef4444' : '#f59e0b'} />
+                                ))}
+                              </Pie>
+                              <Tooltip contentStyle={{ backgroundColor: theme === 'dark' ? '#0f172a' : '#fff', border: 'none', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="w-1/2 pl-4 flex flex-col gap-3">
+                           {kpiStats.prevVsCorr.map((s, i) => (
+                             <div key={i} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/30 p-3 rounded-xl">
+                               <div className="flex items-center gap-2">
+                                 <div className="w-3 h-3 rounded-md" style={{ backgroundColor: s.name === 'Preventivo' ? '#10b981' : s.name === 'Correctivo' ? '#ef4444' : '#f59e0b' }}></div>
+                                 <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase">{s.name}</span>
+                               </div>
+                               <span className="text-sm font-black text-slate-900 dark:text-white">{s.value}</span>
+                             </div>
+                           ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tendencia Mensual Line/Bar Chart */}
+                    <div className="premium-card lg:col-span-3">
+                      <h4 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-6 border-b border-slate-50 dark:border-slate-800/50 pb-4">
+                        <Activity size={18} className="text-emerald-500" />
+                        Tendencia de Intervenciones por Mes
+                      </h4>
+                      <div className="h-[300px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={kpiStats.tendenciaMensual} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? '#1e293b' : '#f1f5f9'} />
+                            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} dy={10} />
+                            <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                            <Tooltip
+                              cursor={{ fill: theme === 'dark' ? '#1e293b' : '#f8fafc' }}
+                              contentStyle={{ backgroundColor: theme === 'dark' ? '#0f172a' : '#fff', border: 'none', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}
+                            />
+                            <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} barSize={30} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Top Equipos Correctivos Bar Chart */}
+                    <div className="premium-card lg:col-span-2">
+                      <h4 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-6 border-b border-slate-50 dark:border-slate-800/50 pb-4">
+                        <Activity size={18} className="text-red-500" />
+                        Equipos con más Mantenimientos Correctivos
+                      </h4>
+                      <div className="h-[250px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={kpiStats.topEqCorrectivos} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke={theme === 'dark' ? '#1e293b' : '#334155'} />
+                            <XAxis type="number" hide />
+                            <YAxis dataKey="name" type="category" width={180} tick={{ fontSize: 9, fontWeight: 700, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                            <Tooltip cursor={{ fill: theme === 'dark' ? '#1e293b' : '#f1f5f9' }} contentStyle={{ backgroundColor: theme === 'dark' ? '#0f172a' : '#fff', border: 'none', borderRadius: '8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }} />
+                            <Bar dataKey="value" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={20}>
+                               {kpiStats.topEqCorrectivos.map((_, i) => <Cell key={i} fill={['#ef4444', '#f87171', '#fca5a5', '#fecaca', '#fee2e2'][i % 5]} />)}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Top Responsables List or Chart */}
+                    <div className="premium-card">
+                      <h4 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-6 border-b border-slate-50 dark:border-slate-800/50 pb-4">
+                        <UserIcon size={18} className="text-blue-500" />
+                        Top 5 Responsables
+                      </h4>
+                      <div className="space-y-3">
+                        {kpiStats.topResp.map((m, i) => (
+                           <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/30">
+                             <div className="flex items-center gap-3">
+                               <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[10px] font-black text-slate-500">{i+1}</div>
+                               <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200 uppercase truncate max-w-[120px]" title={m.name}>{m.name}</span>
+                             </div>
+                             <span className="text-[11px] font-black text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-md">{m.value}</span>
+                           </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Top Repuestos List */}
+                    <div className="premium-card border-t-4 border-emerald-500 lg:col-span-2">
+                      <h4 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-6 border-b border-slate-50 dark:border-slate-800/50 pb-4">
+                        <Settings size={18} className="text-emerald-500" />
+                        Top Repuestos Más Usados
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {kpiStats.topRepuestos.map((r, i) => (
+                           <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/30">
+                             <div className="flex items-center gap-3">
+                               <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[10px] font-black text-slate-500">{i+1}</div>
+                               <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200 uppercase truncate max-w-[200px]" title={r.name}>{r.name}</span>
+                             </div>
+                             <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-md">{r.value}</span>
+                           </div>
+                        ))}
+                        {kpiStats.topRepuestos.length === 0 && <p className="text-sm text-slate-400 italic">No hay repuestos registrados en este filtro.</p>}
+                      </div>
+                    </div>
+
+                    {/* Resumen Tipos de Mantenimiento */}
+                    <div className="premium-card border-t-4 border-violet-500">
+                      <h4 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-6 border-b border-slate-50 dark:border-slate-800/50 pb-4">
+                        <PieChartIcon size={18} className="text-violet-500" />
+                        Resumen de Intervenciones
+                      </h4>
+                      <div className="space-y-3">
+                        {kpiStats.prevVsCorr.map((tipo, i) => {
+                          const colores = { 'Preventivo': 'emerald', 'Correctivo': 'red', 'Complementario': 'amber' } as Record<string, string>;
+                          const color = colores[tipo.name] || 'blue';
+                          const pct = kpiStats.total > 0 ? Math.round((tipo.value / kpiStats.total) * 100) : 0;
+                          return (
+                            <div key={i} className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-3 h-3 rounded-full bg-${color}-500`}></div>
+                                  <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200 uppercase">{tipo.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] font-black text-slate-900 dark:text-white">{tipo.value}</span>
+                                  <span className={`text-[10px] font-bold text-${color}-600 dark:text-${color}-400 bg-${color}-50 dark:bg-${color}-900/20 px-2 py-0.5 rounded`}>{pct}%</span>
+                                </div>
+                              </div>
+                              <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5">
+                                <div className={`bg-${color}-500 h-1.5 rounded-full transition-all duration-700`} style={{ width: `${pct}%` }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800/50 text-center">
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">Total: <span className="font-black text-slate-700 dark:text-slate-200">{kpiStats.total}</span> intervenciones</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
